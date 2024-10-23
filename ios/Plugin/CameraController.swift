@@ -9,6 +9,11 @@
 import AVFoundation
 import UIKit
 
+enum CameraAspectRatio {
+    case ratio16_9
+    case ratio4_3
+}
+
 class CameraController: NSObject {
     var captureSession: AVCaptureSession?
 
@@ -36,13 +41,58 @@ class CameraController: NSObject {
     var audioInput: AVCaptureDeviceInput?
 
     var zoomFactor: CGFloat = 1.0
+
+    var ultraWideCamera: AVCaptureDevice?
+    var ultraWideCameraInput: AVCaptureDeviceInput?
+    
+    // Dictionary to store different camera devices
+    var cameraDevices: [CGFloat: AVCaptureDevice] = [:]
+    var currentAspectRatio: CameraAspectRatio = .ratio16_9
 }
 
 extension CameraController {
-    func prepare(cameraPosition: String, disableAudio: Bool, completionHandler: @escaping (Error?) -> Void) {
+    
+    func switchAspectRatio(aspectRatio: String, completion: @escaping (Error?) -> Void) {
+        // Make sure we're on the main queue
+        DispatchQueue.main.async {
+            // First stop the current session
+            self.captureSession?.stopRunning()
+            
+            
+            
+            // Switch the aspect ratio
+            self.currentAspectRatio = aspectRatio == "4:3" ? .ratio4_3 : .ratio16_9
+            
+            
+            // Prepare the session again with the new aspect ratio
+            self.prepare(
+                aspectRatio: aspectRatio,
+                cameraPosition: self.currentCameraPosition == .front ? "front" : "rear",
+                disableAudio: self.audioInput == nil
+            ) { error in
+                if let error = error {
+                    completion(error)
+                    return
+                }
+                
+                completion(nil)
+            }
+        }
+    }
+    
+    func prepare(aspectRatio: String, cameraPosition: String, disableAudio: Bool, completionHandler: @escaping (Error?) -> Void) {
         func createCaptureSession() {
             self.captureSession = AVCaptureSession()
+            self.currentAspectRatio = aspectRatio == "16:9" ? .ratio16_9 : .ratio4_3
+            
+            if self.currentAspectRatio == .ratio4_3 {
+                self.captureSession?.sessionPreset = .photo
+            } else {
+                self.captureSession?.sessionPreset = .photo
+            }
         }
+        
+        
 
         func configureCaptureDevices() throws {
 
@@ -152,6 +202,130 @@ extension CameraController {
             }
         }
     }
+    
+    func configureUltraWideCamera() throws {
+        let session = AVCaptureDevice.DiscoverySession(
+            deviceTypes: [.builtInUltraWideCamera],
+            mediaType: .video,
+            position: .back
+        )
+        
+        if let ultraWideCamera = session.devices.first {
+            self.ultraWideCamera = ultraWideCamera
+            self.cameraDevices[0.5] = ultraWideCamera
+        }
+        
+        // Setup the regular wide camera for 1x zoom
+        if let regularWideCamera = self.rearCamera {
+            self.cameraDevices[1.0] = regularWideCamera
+        }
+    }
+    
+    func setZoomLevel(zoomLevel: Float) throws {
+        guard let captureSession = self.captureSession else {
+            throw CameraControllerError.captureSessionIsMissing
+        }
+        
+        let level = CGFloat(zoomLevel)
+        
+        // Special handling for 0.5x zoom (ultra-wide camera)
+        if level == 0.5 {
+            let ultraWideSession = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInUltraWideCamera],
+                mediaType: .video,
+                position: .back
+            )
+            
+            guard let ultraWideCamera = ultraWideSession.devices.first else {
+                throw CameraControllerError.invalidOperation
+            }
+            
+            do {
+                captureSession.beginConfiguration()
+                
+                // Remove existing input
+                if let existingInput = self.rearCameraInput {
+                    captureSession.removeInput(existingInput)
+                }
+                
+                // Add ultra-wide camera input
+                let ultraWideInput = try AVCaptureDeviceInput(device: ultraWideCamera)
+                if captureSession.canAddInput(ultraWideInput) {
+                    captureSession.addInput(ultraWideInput)
+                    self.rearCamera = ultraWideCamera
+                    self.rearCameraInput = ultraWideInput
+                    self.zoomFactor = level
+                }
+                
+                captureSession.commitConfiguration()
+                return
+            } catch {
+                captureSession.commitConfiguration()
+                throw CameraControllerError.invalidOperation
+            }
+        } else {
+            // For all other zoom levels, ensure we're on the main camera
+            let mainSession = AVCaptureDevice.DiscoverySession(
+                deviceTypes: [.builtInWideAngleCamera],
+                mediaType: .video,
+                position: .back
+            )
+            
+            guard let mainCamera = mainSession.devices.first else {
+                throw CameraControllerError.noCamerasAvailable
+            }
+            
+            // If we're currently on ultra-wide, switch back to main camera
+            if self.rearCamera?.deviceType != mainCamera.deviceType {
+                do {
+                    captureSession.beginConfiguration()
+                    
+                    // Remove existing input
+                    if let existingInput = self.rearCameraInput {
+                        captureSession.removeInput(existingInput)
+                    }
+                    
+                    // Add main camera input
+                    let mainInput = try AVCaptureDeviceInput(device: mainCamera)
+                    if captureSession.canAddInput(mainInput) {
+                        captureSession.addInput(mainInput)
+                        self.rearCamera = mainCamera
+                        self.rearCameraInput = mainInput
+                    }
+                    
+                    captureSession.commitConfiguration()
+                } catch {
+                    captureSession.commitConfiguration()
+                    throw CameraControllerError.invalidOperation
+                }
+            }
+            
+            // Set zoom on main camera
+            do {
+                try self.rearCamera?.lockForConfiguration()
+                
+                let maxZoom = self.rearCamera?.activeFormat.videoMaxZoomFactor ?? 2.0
+                let resolvedZoom = min(level, maxZoom)
+                
+                self.rearCamera?.videoZoomFactor = resolvedZoom
+                self.zoomFactor = resolvedZoom
+                
+                self.rearCamera?.unlockForConfiguration()
+            } catch {
+                throw CameraControllerError.invalidOperation
+            }
+        }
+    }
+    
+    // Helper method to get current zoom level
+    func getCurrentZoomLevel() -> CGFloat {
+        if let ultraWideCameraInput = self.ultraWideCameraInput,
+        let captureSession = self.captureSession,
+        captureSession.inputs.contains(ultraWideCameraInput) {
+            return 0.5
+        }
+        return self.zoomFactor
+    }
 
     func displayPreview(on view: UIView) throws {
         guard let captureSession = self.captureSession, captureSession.isRunning else { throw CameraControllerError.captureSessionIsMissing }
@@ -257,16 +431,107 @@ extension CameraController {
 
         captureSession.commitConfiguration()
     }
+    
+    func setAspectRatio(_ ratio: CameraAspectRatio) throws {
+        guard let captureSession = self.captureSession else {
+            throw CameraControllerError.captureSessionIsMissing
+        }
+        
+        guard let device = self.currentCameraPosition == .rear ? rearCamera : frontCamera else {
+            throw CameraControllerError.noCamerasAvailable
+        }
+        
+        do {
+            try device.lockForConfiguration()
+            
+            // Get available formats for device
+            let formats = device.formats
+            
+            // Find format matching our desired ratio
+            let desiredFormat = formats.first { format in
+                let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+                let width = CGFloat(dimensions.width)
+                let height = CGFloat(dimensions.height)
+                let ratio = width / height
+                
+                switch ratio {
+                case ratio where abs(ratio - 16.0/9.0) < 0.1:
+                    return self.currentAspectRatio == .ratio16_9
+                case ratio where abs(ratio - 4.0/3.0) < 0.1:
+                    return self.currentAspectRatio == .ratio4_3
+                default:
+                    return false
+                }
+            }
+            
+            if let format = desiredFormat {
+                device.activeFormat = format
+                self.currentAspectRatio = ratio
+            }
+            
+            device.unlockForConfiguration()
+            
+        } catch {
+            throw CameraControllerError.invalidOperation
+        }
+    }
 
     func captureImage(completion: @escaping (UIImage?, Error?) -> Void) {
-        guard let captureSession = captureSession, captureSession.isRunning else { completion(nil, CameraControllerError.captureSessionIsMissing); return }
+        guard let captureSession = captureSession, captureSession.isRunning else {
+            completion(nil, CameraControllerError.captureSessionIsMissing)
+            return
+        }
+        
         let settings = AVCapturePhotoSettings()
-
         settings.flashMode = self.flashMode
         settings.isHighResolutionPhotoEnabled = self.highResolutionOutput
-
+        
+        // Get the proper video orientation based on device orientation
+        if let photoOutputConnection = self.photoOutput?.connection(with: .video) {
+            let deviceOrientation = UIDevice.current.orientation
+            let videoOrientation: AVCaptureVideoOrientation
+            
+            switch deviceOrientation {
+            case .portrait:
+                videoOrientation = .portrait
+            case .portraitUpsideDown:
+                videoOrientation = .portraitUpsideDown
+            case .landscapeLeft:
+                // Note: landscapeLeft/Right are reversed for the back camera
+                videoOrientation = currentCameraPosition == .front ? .landscapeLeft : .landscapeRight
+            case .landscapeRight:
+                // Note: landscapeLeft/Right are reversed for the back camera
+                videoOrientation = currentCameraPosition == .front ? .landscapeRight : .landscapeLeft
+            default:
+                // If device orientation is unknown/faceup/facedown, use the interface orientation
+                videoOrientation = interfaceOrientationToVideoOrientation()
+            }
+            
+            photoOutputConnection.videoOrientation = videoOrientation
+        }
+        
         self.photoOutput?.capturePhoto(with: settings, delegate: self)
         self.photoCaptureCompletionBlock = completion
+    }
+
+    // Helper method to get video orientation from interface orientation
+    private func interfaceOrientationToVideoOrientation() -> AVCaptureVideoOrientation {
+        let orientation = UIApplication.shared.statusBarOrientation
+        
+        switch orientation {
+        case .portrait:
+            return .portrait
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        case .landscapeLeft:
+            return currentCameraPosition == .front ? .landscapeLeft : .landscapeRight
+        case .landscapeRight:
+            return currentCameraPosition == .front ? .landscapeRight : .landscapeLeft
+        case .unknown:
+            return .portrait
+        @unknown default:
+            return .portrait
+        }
     }
 
     func captureSample(completion: @escaping (UIImage?, Error?) -> Void) {

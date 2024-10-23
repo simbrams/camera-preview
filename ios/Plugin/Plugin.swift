@@ -10,6 +10,7 @@ public class CameraPreview: CAPPlugin {
 
     var previewView: UIView!
     var cameraPosition = String()
+    var aspectRatio = String()
     let cameraController = CameraController()
     var x: CGFloat?
     var y: CGFloat?
@@ -43,6 +44,7 @@ public class CameraPreview: CAPPlugin {
 
     @objc func start(_ call: CAPPluginCall) {
         self.cameraPosition = call.getString("position") ?? "rear"
+        self.aspectRatio = call.getString("aspectRatio") ?? "4:3"
         self.highResolutionOutput = call.getBool("enableHighResolution") ?? false
         self.cameraController.highResolutionOutput = self.highResolutionOutput
 
@@ -78,7 +80,7 @@ public class CameraPreview: CAPPlugin {
                 if self.cameraController.captureSession?.isRunning ?? false {
                     call.reject("camera already started")
                 } else {
-                    self.cameraController.prepare(cameraPosition: self.cameraPosition, disableAudio: self.disableAudio){error in
+                    self.cameraController.prepare(aspectRatio: self.aspectRatio, cameraPosition: self.cameraPosition, disableAudio: self.disableAudio){error in
                         if let error = error {
                             print(error)
                             call.reject(error.localizedDescription)
@@ -142,14 +144,30 @@ public class CameraPreview: CAPPlugin {
         let fileUrl=path.appendingPathComponent(fileName)
         return fileUrl
     }
+    
+    @objc func switchAspectRatio(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let aspectRatioString = call.getString("aspectRatio", "4:3")
+            
+            self.cameraController.switchAspectRatio(aspectRatio: aspectRatioString) { error in
+                if let error = error {
+                    call.reject("Failed to switch aspect ratio: \(error.localizedDescription)")
+                } else {
+                    call.resolve([
+                        "aspectRatio": self.cameraController.currentAspectRatio == .ratio16_9 ? "16:9" : "4:3"
+                    ])
+                }
+            }
+        }
+    }
 
     @objc func capture(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
 
             let quality: Int? = call.getInt("quality", 85)
-
-            self.cameraController.captureImage { (image, error) in
-
+            let aspectRatioString = call.getString("aspectRatio", "4:3")
+            
+            self.cameraController.captureImage() { (image, error) in
                 guard let image = image else {
                     print(error ?? "Image capture error")
                     guard let error = error else {
@@ -159,6 +177,7 @@ public class CameraPreview: CAPPlugin {
                     call.reject(error.localizedDescription)
                     return
                 }
+                
                 let imageData: Data?
                 if self.cameraController.currentCameraPosition == .front {
                     let flippedImage = image.withHorizontallyFlippedOrientation()
@@ -166,13 +185,13 @@ public class CameraPreview: CAPPlugin {
                 } else {
                     imageData = image.jpegData(compressionQuality: CGFloat(quality!/100))
                 }
-
+                
                 if self.storeToFile == false {
                     let imageBase64 = imageData?.base64EncodedString()
                     call.resolve(["value": imageBase64!])
                 } else {
                     do {
-                        let fileUrl=self.getTempFilePath()
+                        let fileUrl = self.getTempFilePath()
                         try imageData?.write(to: fileUrl)
                         call.resolve(["value": fileUrl.absoluteString])
                     } catch {
@@ -285,6 +304,19 @@ public class CameraPreview: CAPPlugin {
 
         self.cameraController.stopRecording { (_) in
 
+        }
+    }
+
+    @objc func setZoomLevel(_ call: CAPPluginCall) {
+        guard let zoomLevel = call.getFloat("zoomLevel") else {
+            call.reject("failed to set zoom level. required parameter zoomLevel is missing")
+            return
+        }
+        do {
+            try self.cameraController.setZoomLevel(zoomLevel: zoomLevel)
+            call.resolve()
+        } catch {
+            call.reject("failed to set zoom level")
         }
     }
 
