@@ -67,6 +67,12 @@ export interface AspectRatioOptions {
     aspectRatio?: string;
 }
 
+export interface FocusOptions {
+    /** The zoom level to set for camera view, default 1 */
+    x?: number;
+    y: number;
+}
+
 export interface CameraPreviewPlugin {
     start(options: CameraPreviewOptions): Promise<{}>;
     stop(): Promise<{}>;
@@ -86,4 +92,5 @@ export interface CameraPreviewPlugin {
     setOpacity(options: CameraOpacityOptions): Promise<{}>;
     setZoomLevel(options: ZoomOptions): Promise<void>;
     switchAspectRatio(options: AspectRatioOptions): Promise<void>;
+    tapToFocus(options: FocusOptions): Promise<void>;
 }

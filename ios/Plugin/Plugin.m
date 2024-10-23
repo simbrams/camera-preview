@@ -15,4 +15,6 @@ CAP_PLUGIN(CameraPreview, "CameraPreview",
            CAP_PLUGIN_METHOD(stopRecordVideo, CAPPluginReturnPromise);
            CAP_PLUGIN_METHOD(setZoomLevel, CAPPluginReturnPromise);
            CAP_PLUGIN_METHOD(switchAspectRatio, CAPPluginReturnPromise);
+           CAP_PLUGIN_METHOD(getAspectRatio, CAPPluginReturnPromise);
+           CAP_PLUGIN_METHOD(tapToFocus, CAPPluginReturnPromise);
 )

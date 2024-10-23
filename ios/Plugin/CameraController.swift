@@ -15,6 +15,8 @@ enum CameraAspectRatio {
 }
 
 class CameraController: NSObject {
+    
+    
     var captureSession: AVCaptureSession?
 
     var currentCameraPosition: CameraPosition?
@@ -58,12 +60,6 @@ extension CameraController {
             // First stop the current session
             self.captureSession?.stopRunning()
             
-            
-            
-            // Switch the aspect ratio
-            self.currentAspectRatio = aspectRatio == "4:3" ? .ratio4_3 : .ratio16_9
-            
-            
             // Prepare the session again with the new aspect ratio
             self.prepare(
                 aspectRatio: aspectRatio,
@@ -75,6 +71,7 @@ extension CameraController {
                     return
                 }
                 
+                // self.captureSession?.startRunning()
                 completion(nil)
             }
         }
@@ -87,9 +84,8 @@ extension CameraController {
             
             if self.currentAspectRatio == .ratio4_3 {
                 self.captureSession?.sessionPreset = .photo
-            } else {
-                self.captureSession?.sessionPreset = .photo
             }
+            // Else the default is 16:9
         }
         
         
@@ -110,7 +106,7 @@ extension CameraController {
                     self.rearCamera = camera
 
                     try camera.lockForConfiguration()
-                    camera.focusMode = .continuousAutoFocus
+                    camera.focusMode = .autoFocus
                     camera.unlockForConfiguration()
                 }
             }
@@ -200,6 +196,30 @@ extension CameraController {
             DispatchQueue.main.async {
                 completionHandler(nil)
             }
+        }
+    }
+    
+    func tapToFocus(x: Int, y: Int) throws {
+        guard let device = self.currentCameraPosition == .rear ? rearCamera : frontCamera else { return }
+        do {
+            let point = CGPoint(x: CGFloat(x), y: CGFloat(y))
+            let devicePoint = self.previewLayer?.captureDevicePointConverted(fromLayerPoint: point)
+            
+            try device.lockForConfiguration()
+            let focusMode = AVCaptureDevice.FocusMode.continuousAutoFocus
+            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(focusMode) {
+                device.focusPointOfInterest = CGPoint(x: CGFloat(devicePoint?.x ?? 0), y: CGFloat(devicePoint?.y ?? 0))
+                device.focusMode = focusMode
+            }
+
+            let exposureMode = AVCaptureDevice.ExposureMode.autoExpose
+            if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(exposureMode) {
+                device.exposurePointOfInterest = CGPoint(x: CGFloat(devicePoint?.x ?? 0), y: CGFloat(devicePoint?.y ?? 0))
+                device.exposureMode = exposureMode
+            }
+            device.unlockForConfiguration()
+        } catch {
+            debugPrint(error)
         }
     }
     

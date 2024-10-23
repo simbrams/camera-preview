@@ -41,6 +41,13 @@ public class CameraPreview: CAPPlugin {
 
         cameraController.updateVideoOrientation()
     }
+    
+    @objc func getAspectRatio(_ call: CAPPluginCall) {
+        call.resolve([
+            "aspectRatio": self.aspectRatio
+        ])
+        return
+    }
 
     @objc func start(_ call: CAPPluginCall) {
         self.cameraPosition = call.getString("position") ?? "rear"
@@ -98,7 +105,7 @@ public class CameraPreview: CAPPlugin {
                         try? self.cameraController.displayPreview(on: self.previewView)
 
                         let frontView = self.toBack! ? self.webView : self.previewView
-                        self.cameraController.setupGestures(target: frontView ?? self.previewView, enableZoom: self.enableZoom!)
+                        // self.cameraController.setupGestures(target: frontView ?? self.previewView, enableZoom: self.enableZoom!)
 
                         if self.rotateWhenOrientationChanged == true {
                             NotificationCenter.default.addObserver(self, selector: #selector(CameraPreview.rotated), name: UIDevice.orientationDidChangeNotification, object: nil)
@@ -145,17 +152,68 @@ public class CameraPreview: CAPPlugin {
         return fileUrl
     }
     
+    @objc func tapToFocus(_ call: CAPPluginCall){
+        guard let x = call.getInt("x") else{
+            call.reject("failed to set focuspoint, x is missing")
+            return
+        }
+        
+        guard let y = call.getInt("y") else{
+            call.reject("failed to set focuspoint, x is missing")
+            return
+        }
+        do {
+            try self.cameraController.tapToFocus(x: x, y: y)
+            call.resolve()
+        } catch {
+            call.reject("failed to set focus")
+        }
+    }
+    
     @objc func switchAspectRatio(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             let aspectRatioString = call.getString("aspectRatio", "4:3")
+                    
+            // Store current preview view properties
+            let currentFrame = self.previewView.frame
+            
+            // Remove current preview
+            self.previewView.removeFromSuperview()
+            self.webView?.isOpaque = true
+            self.aspectRatio = aspectRatioString
             
             self.cameraController.switchAspectRatio(aspectRatio: aspectRatioString) { error in
                 if let error = error {
                     call.reject("Failed to switch aspect ratio: \(error.localizedDescription)")
-                } else {
+                    return
+                }
+                
+                // Recreate preview view with same frame
+                self.previewView = UIView(frame: currentFrame)
+                
+                // Setup preview view
+                self.webView?.isOpaque = false
+                self.webView?.backgroundColor = UIColor.clear
+                self.webView?.scrollView.backgroundColor = UIColor.clear
+                self.webView?.superview?.addSubview(self.previewView)
+                
+                if self.toBack! {
+                    self.webView?.superview?.bringSubviewToFront(self.webView!)
+                }
+                
+                // Display new preview
+                do {
+                    try self.cameraController.displayPreview(on: self.previewView)
+                    
+                    // Setup gestures again
+                    let frontView = self.toBack! ? self.webView : self.previewView
+                    // self.cameraController.setupGestures(target: frontView ?? self.previewView, enableZoom: self.enableZoom!)
+                    
                     call.resolve([
-                        "aspectRatio": self.cameraController.currentAspectRatio == .ratio16_9 ? "16:9" : "4:3"
+                        "aspectRatio": aspectRatioString
                     ])
+                } catch {
+                    call.reject("Failed to display preview after switching aspect ratio")
                 }
             }
         }
@@ -164,8 +222,7 @@ public class CameraPreview: CAPPlugin {
     @objc func capture(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
 
-            let quality: Int? = call.getInt("quality", 85)
-            let aspectRatioString = call.getString("aspectRatio", "4:3")
+            let quality: Int? = call.getInt("quality", 100)
             
             self.cameraController.captureImage() { (image, error) in
                 guard let image = image else {
