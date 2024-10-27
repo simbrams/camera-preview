@@ -78,6 +78,7 @@ export interface CameraPreviewPlugin {
     stop(): Promise<{}>;
     capture(options: CameraPreviewPictureOptions): Promise<{
         value: string;
+        format: string;
     }>;
     captureSample(options: CameraSampleOptions): Promise<{
         value: string;

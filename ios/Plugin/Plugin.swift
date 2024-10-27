@@ -147,7 +147,7 @@ public class CameraPreview: CAPPlugin {
         let identifier = UUID()
         let randomIdentifier = identifier.uuidString.replacingOccurrences(of: "-", with: "")
         let finalIdentifier = String(randomIdentifier.prefix(8))
-        let fileName="cpcp_capture_"+finalIdentifier+".jpg"
+        let fileName="cpcp_capture_"+finalIdentifier+".HEIC"
         let fileUrl=path.appendingPathComponent(fileName)
         return fileUrl
     }
@@ -235,22 +235,42 @@ public class CameraPreview: CAPPlugin {
                     return
                 }
                 
-                let imageData: Data?
+                let processedImage: UIImage
                 if self.cameraController.currentCameraPosition == .front {
-                    let flippedImage = image.withHorizontallyFlippedOrientation()
-                    imageData = flippedImage.jpegData(compressionQuality: CGFloat(quality!/100))
+                    processedImage = image.withHorizontallyFlippedOrientation()
                 } else {
-                    imageData = image.jpegData(compressionQuality: CGFloat(quality!/100))
+                    processedImage = image
                 }
                 
+                // Try to get HEIF data first, fall back to JPEG if needed
+                let imageData: Data?
+                let mimeType: String
+                if #available(iOS 17.0, *) {
+                    print("YOLO ÇA CAPTURE EN HEIC")
+                    // HEIF available and conversion successful
+                    imageData = processedImage.heicData()
+                    mimeType = "image/heic"
+                } else {
+                    // Fallback on earlier versions
+                    imageData = processedImage.jpegData(compressionQuality: CGFloat(quality!/100))
+                    mimeType = "image/jpeg"
+                }
+                
+                print("YOLO ÇA CAPTURE")
                 if self.storeToFile == false {
                     let imageBase64 = imageData?.base64EncodedString()
-                    call.resolve(["value": imageBase64!])
+                    call.resolve([
+                        "value": imageBase64!,
+                        "format": mimeType
+                    ])
                 } else {
                     do {
                         let fileUrl = self.getTempFilePath()
                         try imageData?.write(to: fileUrl)
-                        call.resolve(["value": fileUrl.absoluteString])
+                        call.resolve([
+                            "value": fileUrl.absoluteString,
+                            "format": mimeType
+                        ])
                     } catch {
                         call.reject("error writing image to file")
                     }

@@ -153,8 +153,43 @@ extension CameraController {
             guard let captureSession = self.captureSession else { throw CameraControllerError.captureSessionIsMissing }
 
             self.photoOutput = AVCapturePhotoOutput()
-            self.photoOutput!.setPreparedPhotoSettingsArray([AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])], completionHandler: nil)
+            var photoSettings = AVCapturePhotoSettings()
+            // Use HEIF (via HEVC) if available, fall back to JPEG
+            if photoOutput?.availablePhotoCodecTypes.contains(.hevc) == true {
+                photoSettings = AVCapturePhotoSettings(format: [
+                    AVVideoCodecKey: AVVideoCodecType.hevc,
+                    AVVideoCompressionPropertiesKey: [
+                        AVVideoQualityKey: 1.0
+                    ],
+                    kCGImageDestinationLossyCompressionQuality as String: 1.0,
+                    kCGImageDestinationMetadata as String: true
+                ])
+            } else {
+                photoSettings = AVCapturePhotoSettings(format: [
+                    AVVideoCodecKey: AVVideoCodecType.jpeg
+                ])
+            }
+            
+            // Enable maximum quality settings
+            photoSettings.isHighResolutionPhotoEnabled = true
+            if #available(iOS 13.0, *) {
+                photoSettings.photoQualityPrioritization = .quality
+            }
+            
+            photoSettings.embedsDepthDataInPhoto = true
+            photoSettings.embedsPortraitEffectsMatteInPhoto = true
+            
+            if #available(iOS 13.0, *) {
+                if photoOutput?.isLivePhotoAutoTrimmingEnabled == true {
+                    photoOutput?.isLivePhotoAutoTrimmingEnabled = false // Disable auto trimming for bracketed captures
+                }
+            }
+            
+            self.photoOutput?.maxPhotoQualityPrioritization = .quality
+            self.photoOutput?.setPreparedPhotoSettingsArray([photoSettings], completionHandler: nil)
             self.photoOutput?.isHighResolutionCaptureEnabled = self.highResolutionOutput
+            //self.photoOutput!.setPreparedPhotoSettingsArray([AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])], completionHandler: nil)
+            // self.photoOutput?.isHighResolutionCaptureEnabled = self.highResolutionOutput
             if captureSession.canAddOutput(self.photoOutput!) { captureSession.addOutput(self.photoOutput!) }
             captureSession.startRunning()
         }
@@ -505,6 +540,16 @@ extension CameraController {
         let settings = AVCapturePhotoSettings()
         settings.flashMode = self.flashMode
         settings.isHighResolutionPhotoEnabled = self.highResolutionOutput
+        
+        // Configure quality settings
+        settings.isHighResolutionPhotoEnabled = true
+        if #available(iOS 13.0, *) {
+            settings.photoQualityPrioritization = .quality
+        }
+        
+        // Enable all available metadata
+        settings.embedsDepthDataInPhoto = true
+        settings.embedsPortraitEffectsMatteInPhoto = true
         
         // Get the proper video orientation based on device orientation
         if let photoOutputConnection = self.photoOutput?.connection(with: .video) {
