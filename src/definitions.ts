@@ -94,4 +94,7 @@ export interface CameraPreviewPlugin {
     setZoomLevel(options: ZoomOptions): Promise<void>;
     switchAspectRatio(options: AspectRatioOptions): Promise<void>;
     tapToFocus(options: FocusOptions): Promise<void>;
+    getDeviceOrientation(): Promise<{
+        value: string;
+    }>;
 }

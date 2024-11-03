@@ -17,4 +17,5 @@ CAP_PLUGIN(CameraPreview, "CameraPreview",
            CAP_PLUGIN_METHOD(switchAspectRatio, CAPPluginReturnPromise);
            CAP_PLUGIN_METHOD(getAspectRatio, CAPPluginReturnPromise);
            CAP_PLUGIN_METHOD(tapToFocus, CAPPluginReturnPromise);
+           CAP_PLUGIN_METHOD(getDeviceOrientation, CAPPluginReturnPromise);
 )

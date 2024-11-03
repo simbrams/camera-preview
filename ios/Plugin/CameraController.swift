@@ -276,6 +276,22 @@ extension CameraController {
         }
     }
     
+    func getDeviceOrientation() throws -> String {
+        let deviceOrientation = UIDevice.current.orientation
+        switch deviceOrientation {
+        case .portrait:
+            return "Portrait"
+        case .portraitUpsideDown:
+            return "PortraitUpsideDown"
+        case .landscapeLeft:
+            return "LandscapeLeft"
+        case .landscapeRight:
+            return "LandscapeRight"
+        default:
+            return "Portrait"
+        }        
+    }
+    
     func setZoomLevel(zoomLevel: Float) throws {
         guard let captureSession = self.captureSession else {
             throw CameraControllerError.captureSessionIsMissing

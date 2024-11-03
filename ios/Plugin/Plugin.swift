@@ -383,6 +383,17 @@ public class CameraPreview: CAPPlugin {
 
         }
     }
+    
+    @objc func getDeviceOrientation(_ call: CAPPluginCall) {
+        do {
+            let orientation = try self.cameraController.getDeviceOrientation()
+            call.resolve([
+                "value": orientation
+            ])
+        } catch {
+            call.reject("failed to set zoom level")
+        }
+    }
 
     @objc func setZoomLevel(_ call: CAPPluginCall) {
         guard let zoomLevel = call.getFloat("zoomLevel") else {
