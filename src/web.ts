@@ -6,6 +6,9 @@ import {
   CameraPreviewFlashMode,
   CameraSampleOptions,
   CameraOpacityOptions,
+  FocusOptions,
+  AspectRatioOptions,
+  ZoomOptions,
 } from './definitions';
 
 export class CameraPreviewWeb extends WebPlugin implements CameraPreviewPlugin {
@@ -173,10 +176,10 @@ export class CameraPreviewWeb extends WebPlugin implements CameraPreviewPlugin {
   async setZoomLevel(_options: ZoomOptions): Promise<void> {
     throw new Error('setZoomLevel not supported under the web platform');
   }
-  async switchAspectRatio(options: AspectRatioOptions): Promise<void> {
+  async switchAspectRatio(_options: AspectRatioOptions): Promise<void> {
     throw new Error('switchAspectRatio not supported under the web platform');
   }
-  async tapToFocus(options: FocusOptions): Promise<void> {
+  async tapToFocus(_options: FocusOptions): Promise<void> {
      throw new Error('tapToFocus not supported under the web platform');
   }
   async getDeviceOrientation(): Promise<{ value: string }> {
