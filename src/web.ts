@@ -169,6 +169,19 @@ export class CameraPreviewWeb extends WebPlugin implements CameraPreviewPlugin {
       video.style.setProperty('opacity', _options['opacity'].toString());
     }
   }
+
+  async setZoomLevel(_options: ZoomOptions): Promise<void> {
+    throw new Error('setZoomLevel not supported under the web platform');
+  }
+  async switchAspectRatio(options: AspectRatioOptions): Promise<void> {
+    throw new Error('switchAspectRatio not supported under the web platform');
+  }
+  async tapToFocus(options: FocusOptions): Promise<void> {
+     throw new Error('tapToFocus not supported under the web platform');
+  }
+  async getDeviceOrientation(): Promise<{ value: string }> {
+    throw new Error('getDeviceOrientation not supported under the web platform');
+  }
 }
 
 const CameraPreview = new CameraPreviewWeb();
