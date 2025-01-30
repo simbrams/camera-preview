@@ -23,6 +23,7 @@ public class CameraPreview: CAPPlugin {
     var enableZoom: Bool?
     var highResolutionOutput: Bool = false
     var disableAudio: Bool = false
+    var isPreparingCamera: Bool = false
 
     @objc func rotated() {
         let height = self.paddingBottom != nil ? self.height! - self.paddingBottom!: self.height!;
@@ -50,75 +51,128 @@ public class CameraPreview: CAPPlugin {
     }
 
     @objc func start(_ call: CAPPluginCall) {
-        self.cameraPosition = call.getString("position") ?? "rear"
-        self.aspectRatio = call.getString("aspectRatio") ?? "4:3"
-        self.highResolutionOutput = call.getBool("enableHighResolution") ?? false
-        self.cameraController.highResolutionOutput = self.highResolutionOutput
-
-        if call.getInt("width") != nil {
-            self.width = CGFloat(call.getInt("width")!)
-        } else {
-            self.width = UIScreen.main.bounds.size.width
-        }
-        if call.getInt("height") != nil {
-            self.height = CGFloat(call.getInt("height")!)
-        } else {
-            self.height = UIScreen.main.bounds.size.height
-        }
-        self.x = call.getInt("x") != nil ? CGFloat(call.getInt("x")!)/UIScreen.main.scale: 0
-        self.y = call.getInt("y") != nil ? CGFloat(call.getInt("y")!)/UIScreen.main.scale: 0
-        if call.getInt("paddingBottom") != nil {
-            self.paddingBottom = CGFloat(call.getInt("paddingBottom")!)
-        }
-
-        self.rotateWhenOrientationChanged = call.getBool("rotateWhenOrientationChanged") ?? true
-        self.toBack = call.getBool("toBack") ?? false
-        self.storeToFile = call.getBool("storeToFile") ?? false
-        self.enableZoom = call.getBool("enableZoom") ?? false
-        self.disableAudio = call.getBool("disableAudio") ?? false
+	    // If we're already preparing, reject
+	    guard !isPreparingCamera else {
+		call.reject("camera preparation in progress")
+		return
+	    }
+	    
+	    self.isPreparingCamera = true
+	    
+	    // Configure camera settings from call
+	    self.cameraPosition = call.getString("position") ?? "rear"
+	    self.aspectRatio = call.getString("aspectRatio") ?? "4:3"
+	    self.highResolutionOutput = call.getBool("enableHighResolution") ?? false
+	    self.cameraController.highResolutionOutput = self.highResolutionOutput
+	    
+	    if call.getInt("width") != nil {
+		self.width = CGFloat(call.getInt("width")!)
+	    } else {
+		self.width = UIScreen.main.bounds.size.width
+	    }
+	    
+	    if call.getInt("height") != nil {
+		self.height = CGFloat(call.getInt("height")!)
+	    } else {
+		self.height = UIScreen.main.bounds.size.height
+	    }
+	    
+	    self.x = call.getInt("x") != nil ? CGFloat(call.getInt("x")!)/UIScreen.main.scale : 0
+	    self.y = call.getInt("y") != nil ? CGFloat(call.getInt("y")!)/UIScreen.main.scale : 0
+	    
+	    if call.getInt("paddingBottom") != nil {
+		self.paddingBottom = CGFloat(call.getInt("paddingBottom")!)
+	    }
+	    
+	    self.rotateWhenOrientationChanged = call.getBool("rotateWhenOrientationChanged") ?? true
+	    self.toBack = call.getBool("toBack") ?? false
+	    self.storeToFile = call.getBool("storeToFile") ?? false
+	    self.enableZoom = call.getBool("enableZoom") ?? false
+	    self.disableAudio = call.getBool("disableAudio") ?? false
+	    
+	    AVCaptureDevice.requestAccess(for: .video, completionHandler: { [weak self] (granted: Bool) in
+		guard let self = self else {
+		    call.reject("plugin deallocated during permission request")
+		    return
+		}
 		
-        AVCaptureDevice.requestAccess(for: .video, completionHandler: { (granted: Bool) in
-            guard granted else {
-                call.reject("permission failed")
-                return
-            }
-
-            DispatchQueue.main.async {
-                if self.cameraController.captureSession?.isRunning ?? false {
-                    call.reject("camera already started")
-                } else {
-                    self.cameraController.prepare(aspectRatio: self.aspectRatio, cameraPosition: self.cameraPosition, disableAudio: self.disableAudio){error in
-                        if let error = error {
-                            print(error)
-                            call.reject(error.localizedDescription)
-                            return
-                        }
-                        let height = self.paddingBottom != nil ? self.height! - self.paddingBottom!: self.height!
-                        self.previewView = UIView(frame: CGRect(x: self.x ?? 0, y: self.y ?? 0, width: self.width!, height: height))
-                        self.webView?.isOpaque = false
-                        self.webView?.backgroundColor = UIColor.clear
-                        self.webView?.scrollView.backgroundColor = UIColor.clear
-                        self.webView?.superview?.addSubview(self.previewView)
-                        if self.toBack! {
-                            self.webView?.superview?.bringSubviewToFront(self.webView!)
-                        }
-                        try? self.cameraController.displayPreview(on: self.previewView)
-
-                        let frontView = self.toBack! ? self.webView : self.previewView
-                        // self.cameraController.setupGestures(target: frontView ?? self.previewView, enableZoom: self.enableZoom!)
-
-                        if self.rotateWhenOrientationChanged == true {
-                            NotificationCenter.default.addObserver(self, selector: #selector(CameraPreview.rotated), name: UIDevice.orientationDidChangeNotification, object: nil)
-                        }
-
-                        call.resolve()
-
-                    }
-                }
-            }
-        })
-
-    }
+		guard granted else {
+		    self.isPreparingCamera = false
+		    call.reject("permission failed")
+		    return
+		}
+		
+		DispatchQueue.main.async { [weak self] in
+		    guard let self = self else {
+			call.reject("plugin deallocated")
+			return
+		    }
+		    
+		    if self.cameraController.captureSession?.isRunning ?? false {
+			self.isPreparingCamera = false
+			call.reject("camera already started")
+			return
+		    }
+		    
+		    self.cameraController.prepare(
+			aspectRatio: self.aspectRatio,
+			cameraPosition: self.cameraPosition,
+			disableAudio: self.disableAudio
+		    ) { [weak self] error in
+			guard let self = self else {
+			    call.reject("plugin deallocated during preparation")
+			    return
+			}
+			
+			defer {
+			    self.isPreparingCamera = false
+			}
+			
+			if let error = error {
+			    print(error)
+			    call.reject(error.localizedDescription)
+			    return
+			}
+			
+			// Verify we still have a valid webView before proceeding
+			guard let webView = self.webView else {
+			    call.reject("webView no longer available")
+			    return
+			}
+			
+			do {
+			    let height = self.paddingBottom != nil ? self.height! - self.paddingBottom! : self.height!
+			    self.previewView = UIView(frame: CGRect(x: self.x ?? 0, y: self.y ?? 0, width: self.width!, height: height))
+			    
+			    webView.isOpaque = false
+			    webView.backgroundColor = UIColor.clear
+			    webView.scrollView.backgroundColor = UIColor.clear
+			    webView.superview?.addSubview(self.previewView!)
+			    
+			    if self.toBack! {
+				webView.superview?.bringSubviewToFront(webView)
+			    }
+			    
+			    try self.cameraController.displayPreview(on: self.previewView!)
+			    
+			    if self.rotateWhenOrientationChanged == true {
+				NotificationCenter.default.addObserver(
+				    self,
+				    selector: #selector(CameraPreview.rotated),
+				    name: UIDevice.orientationDidChangeNotification,
+				    object: nil
+				)
+			    }
+			    
+			    call.resolve()
+			} catch {
+			    print("Error setting up preview: \(error)")
+			    call.reject(error.localizedDescription)
+			}
+		    }
+		}
+	    })
+	}
 
     @objc func flip(_ call: CAPPluginCall) {
         do {
@@ -130,15 +184,46 @@ public class CameraPreview: CAPPlugin {
     }
 
     @objc func stop(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            if self.cameraController.captureSession?.isRunning ?? false {
-                self.cameraController.captureSession?.stopRunning()
-                self.previewView.removeFromSuperview()
-                self.webView?.isOpaque = true
-                call.resolve()
-            } else {
-                call.reject("camera already stopped")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else {
+                call.resolve() // Already cleaned up
+                return
             }
+            
+            // If we're still preparing, wait a bit and try again
+            if self.isPreparingCamera {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.stop(call)
+                }
+                return
+            }
+            
+            // Safe cleanup of session
+            if let session = self.cameraController.captureSession {
+                if session.isRunning {
+                    session.stopRunning()
+                }
+            }
+            
+            // Safe cleanup of preview
+            if let previewView = self.previewView {
+                previewView.removeFromSuperview()
+                self.previewView = nil
+            }
+            
+            // Reset webView properties
+            self.webView?.isOpaque = true
+            
+            // Remove orientation observer if it was added
+            if self.rotateWhenOrientationChanged == true {
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: UIDevice.orientationDidChangeNotification,
+                    object: nil
+                )
+            }
+            
+            call.resolve()
         }
     }
     // Get user's cache directory path
