@@ -32,6 +32,7 @@ class Preview extends RelativeLayout implements SurfaceHolder.Callback, TextureV
     int viewHeight;
     private boolean enableOpacity = false;
     private float opacity = 1F;
+    private String aspectRatio = "4:3"; // Default aspect ratio
 
     Preview(Context context) {
         this(context, false);
@@ -271,11 +272,9 @@ class Preview extends RelativeLayout implements SurfaceHolder.Callback, TextureV
 
     private Camera.Size getOptimalPreviewSize(List<Camera.Size> sizes, int w, int h) {
         final double ASPECT_TOLERANCE = 0.1;
-        double targetRatio = (double) w / h;
-        if (displayOrientation == 90 || displayOrientation == 270) {
-            targetRatio = (double) h / w;
-        }
-
+        // Get target aspect ratio from context (CameraActivity)
+        double targetRatio = getTargetAspectRatio();
+        
         if (sizes == null) {
             return null;
         }
@@ -283,31 +282,46 @@ class Preview extends RelativeLayout implements SurfaceHolder.Callback, TextureV
         Camera.Size optimalSize = null;
         double minDiff = Double.MAX_VALUE;
 
-        int targetHeight = h;
-
-        // Try to find an size match aspect ratio and size
+        // First, try to find a size that matches the target aspect ratio
         for (Camera.Size size : sizes) {
             double ratio = (double) size.width / size.height;
-            if (Math.abs(ratio - targetRatio) > ASPECT_TOLERANCE) continue;
-            if (Math.abs(size.height - targetHeight) < minDiff) {
-                optimalSize = size;
-                minDiff = Math.abs(size.height - targetHeight);
-            }
-        }
-
-        // Cannot find the one match the aspect ratio, ignore the requirement
-        if (optimalSize == null) {
-            minDiff = Double.MAX_VALUE;
-            for (Camera.Size size : sizes) {
-                if (Math.abs(size.height - targetHeight) < minDiff) {
+            if (Math.abs(ratio - targetRatio) <= ASPECT_TOLERANCE) {
+                // Calculate area to prefer larger sizes when aspect ratio matches
+                int area = size.width * size.height;
+                if (optimalSize == null || area > (optimalSize.width * optimalSize.height)) {
                     optimalSize = size;
-                    minDiff = Math.abs(size.height - targetHeight);
                 }
             }
         }
 
-        Log.d(TAG, "optimal preview size: w: " + optimalSize.width + " h: " + optimalSize.height);
+        // If no matching size found, find the closest aspect ratio
+        if (optimalSize == null) {
+            minDiff = Double.MAX_VALUE;
+            for (Camera.Size size : sizes) {
+                double ratio = (double) size.width / size.height;
+                double diff = Math.abs(ratio - targetRatio);
+                if (diff < minDiff) {
+                    optimalSize = size;
+                    minDiff = diff;
+                }
+            }
+        }
+
+        String aspectRatioStr = targetRatio == (16.0/9.0) ? "16:9" : "4:3";
+        Log.d(TAG, "optimal preview size (" + aspectRatioStr + " enforced): w: " + optimalSize.width + " h: " + optimalSize.height + " ratio: " + ((double)optimalSize.width / optimalSize.height));
         return optimalSize;
+    }
+    
+    private double getTargetAspectRatio() {
+        if ("16:9".equals(aspectRatio)) {
+            return 16.0 / 9.0;
+        }
+        // Default to 4:3
+        return 4.0 / 3.0;
+    }
+    
+    public void setAspectRatio(String aspectRatio) {
+        this.aspectRatio = aspectRatio;
     }
 
     public void surfaceChanged(SurfaceHolder holder, int format, int w, int h) {
