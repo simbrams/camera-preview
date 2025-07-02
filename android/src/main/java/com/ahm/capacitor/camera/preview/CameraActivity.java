@@ -16,6 +16,8 @@ import android.graphics.YuvImage;
 import android.hardware.Camera;
 import android.hardware.Camera.PictureCallback;
 import android.hardware.Camera.ShutterCallback;
+import android.hardware.SensorManager;
+import android.view.OrientationEventListener;
 import android.media.AudioManager;
 import android.media.CamcorderProfile;
 import android.media.MediaRecorder;
@@ -68,7 +70,7 @@ public class CameraActivity extends Fragment {
     public FrameLayout mainLayout;
     public FrameLayout frameContainerLayout;
 
-    private Preview mPreview;
+    public Preview mPreview;
     private boolean canTakePicture = true;
 
     private View view;
@@ -92,6 +94,7 @@ public class CameraActivity extends Fragment {
     // The first rear facing camera
     private int defaultCameraId;
     public String defaultCamera;
+    public String aspectRatio = "4:3";
     public boolean tapToTakePicture;
     public boolean dragEnabled;
     public boolean tapToFocus;
@@ -142,6 +145,7 @@ public class CameraActivity extends Fragment {
 
             //video view
             mPreview = new Preview(getActivity(), enableOpacity);
+            mPreview.setAspectRatio(aspectRatio); // Set the aspect ratio
             mainLayout = (FrameLayout) view.findViewById(getResources().getIdentifier("video_view", "id", appResourcesPackage));
             mainLayout.setLayoutParams(
                 new RelativeLayout.LayoutParams(RelativeLayout.LayoutParams.MATCH_PARENT, RelativeLayout.LayoutParams.MATCH_PARENT)
@@ -344,6 +348,11 @@ public class CameraActivity extends Fragment {
         }
 
         Log.d(TAG, "cameraCurrentlyLocked:" + cameraCurrentlyLocked);
+        
+        // Re-enable orientation listener
+        if (orientationEventListener != null && orientationEventListener.canDetectOrientation()) {
+            orientationEventListener.enable();
+        }
 
         final FrameLayout frameContainerLayout = (FrameLayout) view.findViewById(
             getResources().getIdentifier("frame_container", "id", appResourcesPackage)
@@ -389,6 +398,11 @@ public class CameraActivity extends Fragment {
             mCamera.release();
             mCamera = null;
         }
+        
+        // Disable orientation listener to prevent memory leaks
+        if (orientationEventListener != null) {
+            orientationEventListener.disable();
+        }
     }
 
     @Override
@@ -424,9 +438,56 @@ public class CameraActivity extends Fragment {
 
     }
 
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        
+        // Clean up orientation listener
+        if (orientationEventListener != null) {
+            orientationEventListener.disable();
+            orientationEventListener = null;
+        }
+    }
 
     public Camera getCamera() {
         return mCamera;
+    }
+
+    private OrientationEventListener orientationEventListener;
+    private String currentDeviceOrientation = "Portrait";
+    
+    public String getDeviceOrientation() {
+        Activity activity = getActivity();
+        if (activity == null) {
+            return "Portrait";
+        }
+        
+        // Initialize orientation listener if not already done
+        if (orientationEventListener == null) {
+            orientationEventListener = new OrientationEventListener(activity, SensorManager.SENSOR_DELAY_NORMAL) {
+                @Override
+                public void onOrientationChanged(int orientation) {
+                    if (orientation == ORIENTATION_UNKNOWN) return;
+                    
+                    // Determine the device orientation based on degrees
+                    if (orientation >= 315 || orientation < 45) {
+                        currentDeviceOrientation = "Portrait";
+                    } else if (orientation >= 45 && orientation < 135) {
+                        currentDeviceOrientation = "LandscapeRight";
+                    } else if (orientation >= 135 && orientation < 225) {
+                        currentDeviceOrientation = "PortraitUpsideDown";  
+                    } else if (orientation >= 225 && orientation < 315) {
+                        currentDeviceOrientation = "LandscapeLeft";
+                    }
+                }
+            };
+            
+            if (orientationEventListener.canDetectOrientation()) {
+                orientationEventListener.enable();
+            }
+        }
+        
+        return currentDeviceOrientation;
     }
 
     public void switchCamera() {
@@ -594,74 +655,68 @@ public class CameraActivity extends Fragment {
     ) {
         /*
       get the supportedPictureSize that:
-      - matches exactly width and height
-      - has the closest aspect ratio to the preview aspect ratio
-      - has picture.width and picture.height closest to width and height
-      - has the highest supported picture width and height up to 2 Megapixel if width == 0 || height == 0
+      - enforces the configured aspect ratio (4:3 or 16:9)
+      - has the highest resolution while maintaining the target aspect ratio
+      - falls back to closest aspect ratio if no exact matches available
     */
-        Camera.Size size = mCamera.new Size(width, height);
-
-        // convert to landscape if necessary
-        if (size.width < size.height) {
-            int temp = size.width;
-            size.width = size.height;
-            size.height = temp;
-        }
-
-        Camera.Size requestedSize = mCamera.new Size(size.width, size.height);
-
-        double previewAspectRatio = (double) previewSize.width / (double) previewSize.height;
-
-        if (previewAspectRatio < 1.0) {
-            // reset ratio to landscape
-            previewAspectRatio = 1.0 / previewAspectRatio;
-        }
-
-        Log.d(TAG, "CameraPreview previewAspectRatio " + previewAspectRatio);
-
+        // Get target aspect ratio from configuration
+        double targetAspectRatio = getTargetAspectRatio();
         double aspectTolerance = 0.1;
-        double bestDifference = Double.MAX_VALUE;
+        
+        Camera.Size optimalSize = null;
+        int maxArea = 0;
 
-        for (int i = 0; i < supportedSizes.size(); i++) {
-            Camera.Size supportedSize = supportedSizes.get(i);
+        String aspectRatioStr = targetAspectRatio == (16.0/9.0) ? "16:9" : "4:3";
+        Log.d(TAG, "CameraPreview enforcing " + aspectRatioStr + " aspect ratio for pictures");
 
-            // Perfect match
-            if (supportedSize.equals(requestedSize)) {
-                Log.d(TAG, "CameraPreview optimalPictureSize " + supportedSize.width + 'x' + supportedSize.height);
-                return supportedSize;
-            }
-
-            double difference = Math.abs(previewAspectRatio - ((double) supportedSize.width / (double) supportedSize.height));
-
-            if (difference < bestDifference - aspectTolerance) {
-                // better aspectRatio found
-                if ((width != 0 && height != 0) || (supportedSize.width * supportedSize.height < 2048 * 1024)) {
-                    size.width = supportedSize.width;
-                    size.height = supportedSize.height;
-                    bestDifference = difference;
+        // First pass: Look for sizes that match the target aspect ratio exactly
+        for (Camera.Size supportedSize : supportedSizes) {
+            double ratio = (double) supportedSize.width / (double) supportedSize.height;
+            
+            if (Math.abs(ratio - targetAspectRatio) <= aspectTolerance) {
+                int area = supportedSize.width * supportedSize.height;
+                // Choose the largest matching size available
+                if (area > maxArea) {
+                    optimalSize = supportedSize;
+                    maxArea = area;
                 }
-            } else if (difference < bestDifference + aspectTolerance) {
-                // same aspectRatio found (within tolerance)
-                if (width == 0 || height == 0) {
-                    // set highest supported resolution below 2 Megapixel
-                    if ((size.width < supportedSize.width) && (supportedSize.width * supportedSize.height < 2048 * 1024)) {
-                        size.width = supportedSize.width;
-                        size.height = supportedSize.height;
-                    }
-                } else {
-                    // check if this pictureSize closer to requested width and height
-                    if (
-                        Math.abs(width * height - supportedSize.width * supportedSize.height) <
-                        Math.abs(width * height - size.width * size.height)
-                    ) {
-                        size.width = supportedSize.width;
-                        size.height = supportedSize.height;
+            }
+        }
+
+        // Second pass: If no exact matches found, find the closest aspect ratio
+        if (optimalSize == null) {
+            double bestDifference = Double.MAX_VALUE;
+            Log.d(TAG, "CameraPreview no exact " + aspectRatioStr + " match found, finding closest aspect ratio");
+            
+            for (Camera.Size supportedSize : supportedSizes) {
+                double ratio = (double) supportedSize.width / (double) supportedSize.height;
+                double difference = Math.abs(ratio - targetAspectRatio);
+                
+                if (difference < bestDifference) {
+                    optimalSize = supportedSize;
+                    bestDifference = difference;
+                } else if (Math.abs(difference - bestDifference) < 0.01) {
+                    // If aspect ratios are very similar, prefer larger size
+                    int area = supportedSize.width * supportedSize.height;
+                    int currentArea = optimalSize.width * optimalSize.height;
+                    if (area > currentArea) {
+                        optimalSize = supportedSize;
                     }
                 }
             }
         }
-        Log.d(TAG, "CameraPreview optimalPictureSize " + size.width + 'x' + size.height);
-        return size;
+
+        Log.d(TAG, "CameraPreview optimalPictureSize (" + aspectRatioStr + " enforced): " + optimalSize.width + 'x' + optimalSize.height + 
+              " ratio: " + ((double)optimalSize.width / optimalSize.height));
+        return optimalSize;
+    }
+
+    private double getTargetAspectRatio() {
+        if ("16:9".equals(aspectRatio)) {
+            return 16.0 / 9.0;
+        }
+        // Default to 4:3
+        return 4.0 / 3.0;
     }
 
     static byte[] rotateNV21(final byte[] yuv, final int width, final int height, final int rotation) {
@@ -998,5 +1053,165 @@ public class CameraActivity extends Fragment {
         float x = event.getX(0) - event.getX(1);
         float y = event.getY(0) - event.getY(1);
         return (float) Math.sqrt(x * x + y * y);
+    }
+
+    public void setZoomLevel(float zoomLevel) {
+        if (mCamera == null) {
+            Log.e(TAG, "Camera is not available");
+            return;
+        }
+
+        try {
+            // Handle 0.5x zoom by switching to ultra-wide camera if available
+            if (zoomLevel == 0.5f) {
+                if (switchToUltraWideCamera()) {
+                    return; // Successfully switched to ultra-wide
+                } else {
+                    // Fall back to minimum digital zoom on main camera
+                    zoomLevel = 1.0f;
+                }
+            } else {
+                // For other zoom levels, ensure we're using the main camera
+                if (isUltraWideActive()) {
+                    switchToMainCamera();
+                }
+            }
+
+            // Apply digital zoom
+            Camera.Parameters params = mCamera.getParameters();
+            if (params.isZoomSupported()) {
+                int maxZoom = params.getMaxZoom();
+                
+                // Convert zoom level to zoom index
+                int zoomIndex;
+                if (zoomLevel <= 1.0f) {
+                    zoomIndex = 0;
+                } else {
+                    // Map zoom level to available zoom range
+                    float normalizedZoom = (zoomLevel - 1.0f) / 2.0f; // Normalize 1.0-3.0 to 0.0-1.0
+                    zoomIndex = Math.round(normalizedZoom * maxZoom);
+                    zoomIndex = Math.min(zoomIndex, maxZoom);
+                }
+                
+                params.setZoom(zoomIndex);
+                mCamera.setParameters(params);
+                
+                Log.d(TAG, "Set zoom level: " + zoomLevel + " (index: " + zoomIndex + "/" + maxZoom + ")");
+            } else {
+                Log.w(TAG, "Zoom not supported on this device");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error setting zoom level: " + e.getMessage());
+        }
+    }
+
+    private boolean switchToUltraWideCamera() {
+        // Try to find and switch to ultra-wide camera
+        // Note: This is challenging with the old Camera API as it doesn't provide lens characteristics
+        
+        if (numberOfCameras <= 2) {
+            return false; // Only front and back cameras available
+        }
+        
+        try {
+            // Look for additional back-facing cameras that might be ultra-wide
+            Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
+            for (int i = 0; i < numberOfCameras; i++) {
+                Camera.getCameraInfo(i, cameraInfo);
+                
+                // Skip if this is the current camera or front camera
+                if (i == cameraCurrentlyLocked || cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                    continue;
+                }
+                
+                // If this is a back-facing camera different from current, it might be ultra-wide
+                if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_BACK) {
+                    return switchToCameraId(i);
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error switching to ultra-wide camera: " + e.getMessage());
+        }
+        
+        return false;
+    }
+
+    private void switchToMainCamera() {
+        // Switch back to the main rear camera (usually camera ID 0 for back, 1 for front)
+        Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
+        for (int i = 0; i < numberOfCameras; i++) {
+            Camera.getCameraInfo(i, cameraInfo);
+            if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_BACK) {
+                if (i != cameraCurrentlyLocked) {
+                    switchToCameraId(i);
+                }
+                break;
+            }
+        }
+    }
+
+    private boolean switchToCameraId(int cameraId) {
+        try {
+            if (mCamera != null) {
+                mCamera.stopPreview();
+                mPreview.setCamera(null, -1);
+                mCamera.release();
+                mCamera = null;
+            }
+
+            mCamera = Camera.open(cameraId);
+            
+            if (cameraParameters != null) {
+                // Try to apply previous parameters, but don't fail if they're incompatible
+                try {
+                    mCamera.setParameters(cameraParameters);
+                } catch (Exception e) {
+                    Log.w(TAG, "Could not apply previous camera parameters to new camera: " + e.getMessage());
+                }
+            }
+
+            cameraCurrentlyLocked = cameraId;
+            mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+            mCamera.startPreview();
+            
+            Log.d(TAG, "Successfully switched to camera ID: " + cameraId);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to switch to camera ID " + cameraId + ": " + e.getMessage());
+            
+            // Try to restore the original camera
+            try {
+                if (mCamera != null) {
+                    mCamera.release();
+                }
+                setDefaultCameraId();
+                mCamera = Camera.open(defaultCameraId);
+                cameraCurrentlyLocked = defaultCameraId;
+                mPreview.switchCamera(mCamera, cameraCurrentlyLocked);
+                mCamera.startPreview();
+            } catch (Exception restoreException) {
+                Log.e(TAG, "Failed to restore original camera: " + restoreException.getMessage());
+            }
+            
+            return false;
+        }
+    }
+
+    private boolean isUltraWideActive() {
+        // Simple heuristic: if we're not on the default camera, we might be on ultra-wide
+        return cameraCurrentlyLocked != defaultCameraId;
+    }
+
+    public void tapToFocus(int x, int y) {
+        setFocusArea(x, y, new Camera.AutoFocusCallback() {
+            @Override
+            public void onAutoFocus(boolean success, Camera camera) {
+                if (success) {
+                    Log.d(TAG, "Tap to focus succeeded at (" + x + ", " + y + ")");
+                } else {
+                    Log.d(TAG, "Tap to focus failed at (" + x + ", " + y + ")");
+                }
+            }
+        });
     }
 }
