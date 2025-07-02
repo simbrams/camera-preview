@@ -490,6 +490,26 @@ public class CameraActivity extends Fragment {
         return currentDeviceOrientation;
     }
 
+    /**
+     * Get the current device orientation in degrees using the same sensor-based detection as getDeviceOrientation()
+     * @return orientation in degrees (0, 90, 180, 270)
+     */
+    public int getOrientationDegrees() {
+        String orientation = getDeviceOrientation();
+        switch (orientation) {
+            case "Portrait":
+                return 90;
+            case "LandscapeRight":
+                return 180;
+            case "PortraitUpsideDown":
+                return 270;
+            case "LandscapeLeft":
+                return 0;
+            default:
+                return 90;
+        }
+    }
+
     public void switchCamera() {
         // check for availability of multiple cameras
         if (numberOfCameras == 1) {
@@ -823,25 +843,10 @@ public class CameraActivity extends Fragment {
                     }
 
                     if (cameraCurrentlyLocked == Camera.CameraInfo.CAMERA_FACING_FRONT && disableExifHeaderStripping) {
-                        Activity activity = getActivity();
-                        int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
-                        int degrees = 0;
-                        switch (rotation) {
-                            case Surface.ROTATION_0:
-                                degrees = 0;
-                                break;
-                            case Surface.ROTATION_90:
-                                degrees = 180;
-                                break;
-                            case Surface.ROTATION_180:
-                                degrees = 270;
-                                break;
-                            case Surface.ROTATION_270:
-                                degrees = 0;
-                                break;
-                        }
+                        int degrees = getOrientationDegrees();
                         int orientation;
                         Camera.CameraInfo info = new Camera.CameraInfo();
+                        Camera.getCameraInfo(cameraCurrentlyLocked, info);
                         if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
                             orientation = (info.orientation + degrees) % 360;
                             if (degrees != 0) {
@@ -852,7 +857,7 @@ public class CameraActivity extends Fragment {
                         }
                         params.setRotation(orientation);
                     } else {
-                        params.setRotation(mPreview.getDisplayOrientation());
+                        params.setRotation(getOrientationDegrees());
                     }
 
                     mCamera.setParameters(params);
