@@ -77,6 +77,19 @@ public class CameraPreview extends Plugin implements CameraActivity.CameraPrevie
     }
 
     @PluginMethod
+    public void getDeviceOrientation(PluginCall call) {
+        try {
+            String orientation = fragment.getDeviceOrientation();
+            JSObject ret = new JSObject();
+            ret.put("value", orientation);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Logger.debug(getLogTag(), "Camera getDeviceOrientation exception: " + e);
+            call.reject("failed to get device orientation");
+        }
+    }
+
+    @PluginMethod
     public void setOpacity(PluginCall call) {
         if (this.hasCamera(call) == false) {
             call.error("Camera is not running");
@@ -203,6 +216,88 @@ public class CameraPreview extends Plugin implements CameraActivity.CameraPrevie
     }
 
     @PluginMethod
+    public void setZoomLevel(PluginCall call) {
+        if (this.hasCamera(call) == false) {
+            call.reject("Camera is not running");
+            return;
+        }
+
+        Float zoomLevel = call.getFloat("zoomLevel");
+        if (zoomLevel == null) {
+            call.reject("zoomLevel required parameter is missing");
+            return;
+        }
+
+        try {
+            fragment.setZoomLevel(zoomLevel);
+            call.resolve();
+        } catch (Exception e) {
+            Logger.debug(getLogTag(), "Camera setZoomLevel exception: " + e);
+            call.reject("failed to set zoom level: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void tapToFocus(PluginCall call) {
+        if (this.hasCamera(call) == false) {
+            call.reject("Camera is not running");
+            return;
+        }
+
+        Integer x = call.getInt("x");
+        Integer y = call.getInt("y");
+
+        if (x == null) {
+            call.reject("x coordinate is required");
+            return;
+        }
+
+        if (y == null) {
+            call.reject("y coordinate is required");
+            return;
+        }
+
+        try {
+            fragment.tapToFocus(x, y);
+            call.resolve();
+        } catch (Exception e) {
+            Logger.debug(getLogTag(), "Camera tapToFocus exception: " + e);
+            call.reject("failed to set focus point: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void switchAspectRatio(PluginCall call) {
+        if (this.hasCamera(call) == false) {
+            call.reject("Camera is not running");
+            return;
+        }
+
+        String aspectRatio = call.getString("aspectRatio");
+        if (aspectRatio == null || aspectRatio.isEmpty()) {
+            call.reject("aspectRatio parameter is required");
+            return;
+        }
+
+        if (!"4:3".equals(aspectRatio) && !"16:9".equals(aspectRatio)) {
+            call.reject("aspectRatio must be either '4:3' or '16:9'");
+            return;
+        }
+
+        try {
+            fragment.aspectRatio = aspectRatio;
+            // Update the preview aspect ratio
+            if (fragment.mPreview != null) {
+                fragment.mPreview.setAspectRatio(aspectRatio);
+            }
+            call.resolve();
+        } catch (Exception e) {
+            Logger.debug(getLogTag(), "Camera switchAspectRatio exception: " + e);
+            call.reject("failed to switch aspect ratio: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
     public void startRecordVideo(final PluginCall call) {
         if (this.hasCamera(call) == false) {
             call.reject("Camera is not running");
@@ -281,6 +376,7 @@ public class CameraPreview extends Plugin implements CameraActivity.CameraPrevie
         final Integer y = call.getInt("y", 0);
         final Integer width = call.getInt("width", 0);
         final Integer height = call.getInt("height", 0);
+        final String aspectRatio = call.getString("aspectRatio", "4:3");
         final Integer paddingBottom = call.getInt("paddingBottom", 0);
         final Boolean toBack = call.getBoolean("toBack", false);
         final Boolean storeToFile = call.getBoolean("storeToFile", false);
@@ -293,6 +389,7 @@ public class CameraPreview extends Plugin implements CameraActivity.CameraPrevie
         fragment = new CameraActivity();
         fragment.setEventListener(this);
         fragment.defaultCamera = position;
+        fragment.aspectRatio = aspectRatio;
         fragment.tapToTakePicture = false;
         fragment.dragEnabled = false;
         fragment.tapToFocus = true;
